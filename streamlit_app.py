@@ -1,136 +1,114 @@
 import streamlit as st
+import pandas as pd
 import calendar
-import datetime
-import json
+from datetime import datetime
 import os
 
-# ======================
-# Funciones de Guardado
-# ======================
-
-FILE_PATH = "vacaciones.json"
-
-def cargar_registros():
-    if os.path.exists(FILE_PATH):
-        with open(FILE_PATH, "r") as f:
-            return json.load(f)
-    return []
-
-def guardar_registros(data):
-    with open(FILE_PATH, "w") as f:
-        json.dump(data, f, indent=4)
-
-# ======================
-# Generador del Calendario
-# ======================
-
+# -------------------------------------------
+# 1. FUNCION PARA GENERAR CALENDARIO ORDENADO
+# -------------------------------------------
 def generar_calendario(anio, mes):
-    cal = calendar.Calendar()
-    semanas = cal.monthdayscalendar(anio, mes)  # devuelve semanas completas
-    return semanas
+    cal = calendar.Calendar(firstweekday=0)
+    weeks = cal.monthdayscalendar(anio, mes)
+    return weeks
 
-# ======================
-# INTERFAZ STREAMLIT
-# ======================
+# -------------------------------------------
+# 2. FUNCION PARA CARGAR O CREAR REGISTRO
+# -------------------------------------------
+def cargar_registro():
+    if os.path.exists("registro_vacaciones.csv"):
+        return pd.read_csv("registro_vacaciones.csv")
+    else:
+        df = pd.DataFrame(columns=["Empleado", "Fecha", "Motivo"])
+        df.to_csv("registro_vacaciones.csv", index=False)
+        return df
 
-st.set_page_config(page_title="Vacaciones", page_icon="🌴", layout="centered")
+# -------------------------------------------
+# 3. FUNCION PARA GUARDAR REGISTRO
+# -------------------------------------------
+def guardar_registro(df):
+    df.to_csv("registro_vacaciones.csv", index=False)
 
-st.title("🌴 Gestor de Vacaciones")
-st.write("Seleccioná tus días y guardalos para compartir el registro.")
+# -------------------------------------------
+# INICIO DE LA APP
+# -------------------------------------------
+st.set_page_config(page_title="Gestor de Vacaciones", layout="centered")
 
-# Año y mes
-hoy = datetime.date.today()
-colA, colB = st.columns(2)
+st.title("🏖️ Gestor de Vacaciones")
+st.subheader("Registro y visualización de vacaciones del personal")
 
-anio = colA.number_input("Año", min_value=2020, max_value=2100, value=hoy.year)
-mes = colB.selectbox(
-    "Mes",
-    options=list(range(1, 13)),
-    index=hoy.month - 1,
-    format_func=lambda x: calendar.month_name[x].capitalize()
-)
+st.divider()
 
-# Generar calendario
-semanas = generar_calendario(anio, mes)
-
-st.subheader(f"📅 Calendario de {calendar.month_name[mes].capitalize()} {anio}")
-
-# ====== DISEÑO DEL CALENDARIO ======
-dias_semana = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
-cols = st.columns(7)
-
-for i, d in enumerate(dias_semana):
-    cols[i].markdown(f"<div style='text-align:center;font-weight:bold;font-size:14px'>{d}</div>", unsafe_allow_html=True)
-
-for semana in semanas:
-    cols = st.columns(7)
-    for i, dia in enumerate(semana):
-        if dia == 0:
-            cols[i].markdown("<div style='height:25px'></div>", unsafe_allow_html=True)
-        else:
-            cols[i].markdown(
-                f"""
-                <div style='
-                    text-align:center;
-                    padding:6px;
-                    border-radius:6px;
-                    border:1px solid #ddd;
-                    font-size:13px;
-                    width:38px;
-                    margin:auto;
-                '>{dia}</div>
-                """,
-                unsafe_allow_html=True
-            )
-
-# ======================
-# Selección de días
-# ======================
-
-st.subheader("📝 Registrar día de Vacaciones")
+# -------------------------------------------
+# SECCIÓN: CALENDARIO
+# -------------------------------------------
+st.header("📅 Calendario")
 
 col1, col2 = st.columns(2)
-dia_seleccionado = col1.number_input("Día", min_value=1, max_value=31, value=hoy.day)
-motivo = col2.text_input("Motivo / Comentario")
+with col1:
+    anio = st.number_input("Año", min_value=2020, max_value=2100, value=datetime.now().year)
 
-if st.button("➕ Guardar día"):
-    registros = cargar_registros()
+with col2:
+    mes = st.number_input("Mes", min_value=1, max_value=12, value=datetime.now().month)
 
-    nuevo = {
-        "anio": anio,
-        "mes": mes,
-        "dia": int(dia_seleccionado),
-        "motivo": motivo
-    }
+weeks = generar_calendario(anio, mes)
 
-    registros.append(nuevo)
-    guardar_registros(registros)
-    st.success("Día guardado correctamente 🎉")
+# Mostrar calendario más estético
+st.write(f"### {calendar.month_name[mes]} {anio}")
 
-# ======================
-# Mostrar registro guardado
-# ======================
+# Crear tabla del calendario
+cal_df = pd.DataFrame(weeks, columns=["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"])
 
-st.subheader("📚 Registro Guardado")
+# Reemplazar ceros por vacío
+cal_df = cal_df.replace(0, "")
 
-registros = cargar_registros()
+# Mostrar centrado y más pequeño
+st.table(cal_df.style.set_table_styles([
+    {"selector": "th", "props": [("text-align", "center"), ("font-size", "16px")]},
+    {"selector": "td", "props": [("text-align", "center"), ("font-size", "14px")]}
+]))
 
-if len(registros) == 0:
-    st.info("No hay registros guardados todavía.")
+
+st.divider()
+
+# -------------------------------------------
+# SECCIÓN: REGISTRO DE VACACIONES
+# -------------------------------------------
+st.header("✍️ Registrar Vacaciones")
+
+df = cargar_registro()
+
+empleado = st.text_input("Empleado")
+fecha = st.date_input("Fecha de vacaciones")
+motivo = st.text_input("Motivo (opcional)")
+
+if st.button("Guardar registro"):
+    if empleado.strip() == "":
+        st.error("Debes ingresar un nombre.")
+    else:
+        nuevo = pd.DataFrame([[empleado, fecha, motivo]], 
+                             columns=["Empleado", "Fecha", "Motivo"])
+        df = pd.concat([df, nuevo], ignore_index=True)
+        guardar_registro(df)
+        st.success("Registro guardado correctamente.")
+
+st.divider()
+
+# -------------------------------------------
+# SECCIÓN: VISUALIZAR REGISTRO
+# -------------------------------------------
+st.header("📂 Registros guardados")
+
+if df.empty:
+    st.info("No hay registros todavía.")
 else:
-    for r in registros:
-        st.markdown(f"""
-        <div style='padding:10px;border:1px solid #ccc;border-radius:8px;margin-bottom:8px;'>
-            <b>{r['dia']}/{r['mes']}/{r['anio']}</b><br>
-            {r['motivo']}
-        </div>
-        """, unsafe_allow_html=True)
+    st.dataframe(df)
 
-# ======================
-# Opción de borrar todo
-# ======================
-
-if st.button("🗑️ Borrar todos los registros"):
-    guardar_registros([])
-    st.warning("Todos los registros fueron eliminados.")
-
+    # Botón de descarga
+    csv = df.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        label="📥 Descargar Registro",
+        data=csv,
+        file_name="registro_vacaciones.csv",
+        mime="text/csv"
+    )
