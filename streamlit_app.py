@@ -59,7 +59,7 @@ FERIADOS = {datetime.datetime.strptime(s, "%Y-%m-%d").date() for s in FERIADOS_S
 #                CONFIG GENERAL
 # ===================================================================
 SECTORES = ["LABORATORIO", "PRODUCCION", "COMERCIAL", "FACTURACION",
-            "COMPRAS", "CONTABLE", "SOCIOS"]
+            "COMPRAS", "CONTABLE", "SOCIOS", "SISTEMAS"]
 
 PALETTE = ["#6EC6FF", "#81C784", "#FFF176", "#F48FB1", "#CE93D8",
            "#FFCC80", "#80CBC4", "#E6EE9C"]
