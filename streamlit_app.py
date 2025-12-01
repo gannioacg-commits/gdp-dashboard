@@ -1,25 +1,27 @@
-# streamlit_app.py
+# app.py
 import streamlit as st
 import pandas as pd
 import datetime
 import calendar
 import random
-from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
+from PIL import Image, ImageDraw, ImageFont
+import os
 
-# -------------------------
-# Helpers: fuente segura
-# -------------------------
+# ---------------------------
+# Configuración y helpers
+# ---------------------------
+st.set_page_config(page_title="App Vacaciones - Versión B", layout="wide")
+
+# Fuente segura (DejaVu incluida con Pillow)
 def cargar_fuente(size):
     try:
         return ImageFont.truetype("DejaVuSans.ttf", size)
     except:
         return ImageFont.load_default()
 
-# -------------------------
-# Feriados 2025 & 2026 (YYYY-MM-DD)
-# -------------------------
-FERIADOS = {
+# Feriados 2025 y 2026 (YYYY-MM-DD)
+FERIADOS_STR = {
     # 2025
     "2025-01-01","2025-03-03","2025-03-04","2025-03-24","2025-04-18","2025-04-19",
     "2025-05-01","2025-05-25","2025-06-16","2025-06-20","2025-07-09","2025-08-18",
@@ -29,20 +31,18 @@ FERIADOS = {
     "2026-05-01","2026-05-25","2026-06-17","2026-06-20","2026-07-09","2026-08-17",
     "2026-10-12","2026-11-23","2026-12-08","2026-12-25"
 }
-FERIADOS = {datetime.datetime.strptime(s, "%Y-%m-%d").date() for s in FERIADOS}
+FERIADOS = {datetime.datetime.strptime(s, "%Y-%m-%d").date() for s in FERIADOS_STR}
 
-# -------------------------
-# Config / sectores / colores
-# -------------------------
 SECTORES = ["LABORATORIO", "PRODUCCION", "COMERCIAL", "FACTURACION", "COMPRAS", "CONTABLE", "SOCIOS"]
 PALETTE = ["#6EC6FF", "#81C784", "#FFF176", "#F48FB1", "#CE93D8", "#FFCC80", "#80CBC4", "#E6EE9C"]
 
-# -------------------------
-# Inicializar session_state
-# -------------------------
+CSV_FILE = "vacaciones.csv"  # opcional: guarda en disco además de en session_state
+
+# ---------------------------
+# Session state init
+# ---------------------------
 if "vacaciones" not in st.session_state:
-    # guardamos lista de dicts con claves: Nombre, Sector, Inicio (date), Fin (date), Color (hex)
-    st.session_state.vacaciones = []
+    st.session_state.vacaciones = []  # lista de dicts: {Nombre, Sector, Inicio(str ISO), Fin(str ISO), Color}
 
 if "mes" not in st.session_state:
     hoy = datetime.date.today()
@@ -50,24 +50,55 @@ if "mes" not in st.session_state:
 if "anio" not in st.session_state:
     st.session_state.anio = hoy.year
 
-# -------------------------
-# Utilitarios de validación
-# -------------------------
+# ---------------------------
+# I/O opcional CSV
+# ---------------------------
+def guardar_csv_local():
+    try:
+        df = pd.DataFrame(st.session_state.vacaciones)
+        df.to_csv(CSV_FILE, index=False)
+        return True
+    except Exception as e:
+        return False
+
+def cargar_csv_local():
+    if os.path.exists(CSV_FILE):
+        try:
+            df = pd.read_csv(CSV_FILE)
+            # asegurar columnas y formato (Inicio/Fin ISO)
+            required = ["Nombre","Sector","Inicio","Fin","Color"]
+            for c in required:
+                if c not in df.columns:
+                    df[c] = ""
+            # convertir a lista de dicts
+            st.session_state.vacaciones = df[required].to_dict(orient="records")
+            return True
+        except:
+            return False
+    return False
+
+# intentar cargar CSV al inicio si session vacía
+if len(st.session_state.vacaciones) == 0:
+    cargar_csv_local()
+
+# ---------------------------
+# Utilidades de validación
+# ---------------------------
 def es_feriado(fecha: datetime.date) -> bool:
     return fecha in FERIADOS
 
 def feriado_en_puntas(inicio: datetime.date, fin: datetime.date):
     """
-    Prohíbe:
-      - inicio sea feriado
-      - fin sea feriado
-      - inicio sea 1 día después de feriado (i.e. dia anterior inicio es feriado)
-      - fin sea 1 día antes de feriado (i.e. dia siguiente fin es feriado)
+    Reglas prohibidas:
+     - inicio es feriado
+     - fin es feriado
+     - inicio un dia después de feriado (i.e. dia anterior inicio es feriado)
+     - fin un dia antes de feriado (i.e. dia siguiente fin es feriado)
     """
     if inicio in FERIADOS:
-        return True, f"El día de inicio ({inicio}) es feriado."
+        return True, f"El primer día ({inicio}) es feriado."
     if fin in FERIADOS:
-        return True, f"El día de fin ({fin}) es feriado."
+        return True, f"El último día ({fin}) es feriado."
     if (inicio - datetime.timedelta(days=1)) in FERIADOS:
         prev = (inicio - datetime.timedelta(days=1))
         return True, f"No podés iniciar el {inicio} porque el día anterior ({prev}) es feriado."
@@ -76,137 +107,132 @@ def feriado_en_puntas(inicio: datetime.date, fin: datetime.date):
         return True, f"No podés finalizar el {fin} porque el día siguiente ({nxt}) es feriado."
     return False, ""
 
-def hay_solapamiento(inicio: datetime.date, fin: datetime.date, sector: str):
+def ajustar_si_fin_de_semana(inicio: datetime.date, dias:int):
     """
-    Revisa solapamiento dentro del mismo sector.
+    Si inicio cae en sábado/domingo desplazalo al lunes siguiente.
+    Ajusta fin manteniendo la duración.
+    Devuelve (inicio_ajustado, fin_ajustado, mensaje) — mensaje si se ajustó.
     """
+    msg = ""
+    inicio_new = inicio
+    if inicio.weekday() == 5:  # sábado
+        delta = 2
+        inicio_new = inicio + datetime.timedelta(days=delta)
+        msg = f"El inicio cayó en sábado; se desplazó al lunes {inicio_new}."
+    elif inicio.weekday() == 6:  # domingo
+        delta = 1
+        inicio_new = inicio + datetime.timedelta(days=delta)
+        msg = f"El inicio cayó en domingo; se desplazó al lunes {inicio_new}."
+    fin_new = inicio_new + datetime.timedelta(days=dias-1)
+    return inicio_new, fin_new, msg
+
+def solapamiento_mismo_sector(inicio: datetime.date, fin: datetime.date, sector: str):
     for rec in st.session_state.vacaciones:
-        if rec["Sector"].strip().upper() != sector.strip().upper():
+        if rec.get("Sector","").strip().upper() != sector.strip().upper():
             continue
-        ri = rec["Inicio"]
-        rf = rec["Fin"]
-        # si las fechas almacenadas son strings, convertir
-        if isinstance(ri, str):
-            ri = datetime.datetime.strptime(ri, "%Y-%m-%d").date()
-        if isinstance(rf, str):
-            rf = datetime.datetime.strptime(rf, "%Y-%m-%d").date()
-        # comprobar solapamiento
+        # parse stored dates
+        try:
+            ri = datetime.datetime.strptime(rec["Inicio"], "%Y-%m-%d").date()
+            rf = datetime.datetime.strptime(rec["Fin"], "%Y-%m-%d").date()
+        except:
+            continue
+        # overlap check
         if (inicio <= rf) and (fin >= ri):
             return True, rec["Nombre"]
     return False, None
 
-# -------------------------
-# UI Lateral - alta
-# -------------------------
-st.set_page_config(page_title="Calendario Vacaciones (integrado)", layout="wide")
-st.title("📅 Calendario de Vacaciones — Integrado")
-
+# ---------------------------
+# UI - Sidebar: registrar
+# ---------------------------
+st.title("📅 Gestión de Vacaciones - Versión B (Integrada)")
 with st.sidebar:
     st.header("Registrar vacaciones")
     nombre = st.text_input("Nombre del empleado")
     sector = st.selectbox("Sector", SECTORES)
     fecha_inicio = st.date_input("Fecha de inicio", value=datetime.date.today())
-    duracion = st.radio("Duración", ["1 semana (7 días)", "2 semanas (14 días)"])
-    dias = 7 if duracion.startswith("1") else 14
+    dur = st.radio("Duración", ["1 semana (7 días)","2 semanas (14 días)"])
+    dias = 7 if dur.startswith("1") else 14
 
-    # Color sugerido por empleado (si ya existe, mantener mismo color)
-    existing_colors = {v["Nombre"]: v["Color"] for v in st.session_state.vacaciones}
-    color_default = existing_colors.get(nombre, random.choice(PALETTE))
-    color = st.color_picker("Color (opcional)", value=color_default)
+    # sugerir color por empleado si ya existe
+    color_sugerido = None
+    for r in st.session_state.vacaciones:
+        if r.get("Nombre","").strip().lower() == nombre.strip().lower() and r.get("Color"):
+            color_sugerido = r["Color"]
+            break
+    if not color_sugerido:
+        color_sugerido = random.choice(PALETTE)
+    color = st.color_picker("Color", value=color_sugerido)
 
-    if st.button("📥 Registrar"):
-        inicio = fecha_inicio
-        fin = inicio + datetime.timedelta(days=dias - 1)
-
-        # Validaciones
+    st.write("") 
+    st.checkbox_label = st.checkbox("Guardar también localmente en vacations CSV (opcional)", value=True, key="guardar_local_opt")
+    if st.button("Registrar"):
         if not nombre.strip():
-            st.error("Ingresá el nombre del empleado.")
+            st.error("Ingresá un nombre.")
         else:
-            # feriados en puntas
-            err, msg = feriado_en_puntas(inicio, fin)
+            # ajustar fin de semana si aplica
+            inicio_aj, fin_aj, msg_aj = ajustar_si_fin_de_semana(fecha_inicio, dias)
+            if msg_aj:
+                st.info(msg_aj)
+
+            # validar feriados en puntas
+            err, msg = feriado_en_puntas(inicio_aj, fin_aj)
             if err:
                 st.error(msg)
             else:
-                # solapamiento por sector
-                sup, quien = hay_solapamiento(inicio, fin, sector)
+                # validar solapamiento
+                sup, quien = solapamiento_mismo_sector(inicio_aj, fin_aj, sector)
                 if sup:
                     st.error(f"Solapamiento con {quien} del mismo sector.")
                 else:
-                    # guardar (almacenamos fechas como ISO strings para facilidad)
+                    # grabar
                     rec = {
                         "Nombre": nombre.strip(),
                         "Sector": sector,
-                        "Inicio": inicio.isoformat(),
-                        "Fin": fin.isoformat(),
+                        "Inicio": inicio_aj.isoformat(),
+                        "Fin": fin_aj.isoformat(),
                         "Color": color
                     }
                     st.session_state.vacaciones.append(rec)
-                    st.success(f"Vacaciones registradas: {nombre} ({inicio} → {fin})")
+                    # opcional guardar local
+                    if st.session_state.get("guardar_local_opt", True):
+                        guardar_csv_local()
+                    st.success(f"Registrado: {nombre} ({inicio_aj} → {fin_aj})")
 
-# -------------------------
-# Acciones: eliminar / exportar
-# -------------------------
-st.subheader("🗂 Registros actuales")
+# ---------------------------
+# UI principal: registros y acciones
+# ---------------------------
+st.subheader("Registros actuales")
 if len(st.session_state.vacaciones) == 0:
     st.info("No hay vacaciones registradas.")
 else:
-    df_display = pd.DataFrame(st.session_state.vacaciones)
-    # mostrar tabla
+    df_show = pd.DataFrame(st.session_state.vacaciones)
     with st.expander("Ver tabla completa"):
-        # convertir fechas a ISO si no lo están
-        df_display2 = df_display.copy()
-        st.dataframe(df_display2)
+        st.dataframe(df_show)
 
-    # eliminar selección por índice
-    st.write("")
+    # eliminar
     st.markdown("### 🗑 Eliminar registro")
-    options = [f"{i} — {r['Nombre']} ({r['Inicio']}) — {r['Sector']}" for i, r in enumerate(st.session_state.vacaciones)]
+    options = [f"{i} - {r['Nombre']} ({r['Inicio']}) - {r['Sector']}" for i, r in enumerate(st.session_state.vacaciones)]
     sel = st.selectbox("Seleccioná registro para eliminar", options)
-    if st.button("Eliminar selección"):
-        idx = int(sel.split(" — ")[0])
+    if st.button("Eliminar seleccionado"):
+        idx = int(sel.split(" - ")[0])
         eliminado = st.session_state.vacaciones.pop(idx)
+        # actualizar CSV local
+        if st.session_state.get("guardar_local_opt", True):
+            guardar_csv_local()
         st.success(f"Eliminado: {eliminado['Nombre']} ({eliminado['Inicio']})")
 
-    # exportar CSV botón
-    def df_to_csv_bytes(data):
+    # export CSV desde memoria
+    def export_csv_bytes(data):
         df = pd.DataFrame(data)
         return df.to_csv(index=False).encode("utf-8")
+    csv_bytes = export_csv_bytes(st.session_state.vacaciones)
+    st.download_button("📥 Descargar CSV (memoria)", data=csv_bytes, file_name="vacaciones_memoria.csv", mime="text/csv")
 
-    bts = df_to_csv_bytes(st.session_state.vacaciones)
-    st.download_button("📥 Descargar CSV", data=bts, file_name="vacaciones_export.csv", mime="text/csv")
-
-# -------------------------
-# Calendario navegable y render
-# -------------------------
-st.subheader("📆 Calendario gráfico (navegable)")
-
-# controles mes/año y botones prev/next
-col1, col2, col3, col4 = st.columns([1,2,1,1])
-with col1:
-    if st.button("⬅️ Mes anterior"):
-        # decrementar mes
-        st.session_state.mes -= 1
-        if st.session_state.mes == 0:
-            st.session_state.mes = 12
-            st.session_state.anio -= 1
-with col2:
-    mes_sel = st.selectbox("Mes", list(range(1,13)), index=st.session_state.mes - 1, format_func=lambda x: calendar.month_name[x])
-    anio_sel = st.number_input("Año", min_value=2024, max_value=2035, value=st.session_state.anio)
-    # sincronizar sesiones
-    st.session_state.mes = mes_sel
-    st.session_state.anio = anio_sel
-with col3:
-    if st.button("Mes siguiente ➡️"):
-        st.session_state.mes += 1
-        if st.session_state.mes == 13:
-            st.session_state.mes = 1
-            st.session_state.anio += 1
-with col4:
-    vista = st.selectbox("Vista", ["Mensual", "Semanal"], index=0)
-
-# preparar estructura de eventos por día
+# ---------------------------
+# Construir mapa días -> eventos
+# ---------------------------
 def construir_map_dias():
-    mapa = {}  # key: date -> list of (nombre,color,sector)
+    mapa = {}  # date -> list of (nombre,color,sector)
     for rec in st.session_state.vacaciones:
         try:
             inicio = datetime.datetime.strptime(rec["Inicio"], "%Y-%m-%d").date()
@@ -223,130 +249,154 @@ def construir_map_dias():
 
 mapa_dias = construir_map_dias()
 
-# función para dibujar calendario (PIL image) — fondo rojo para feriados, colores para vacaciones
-def dibujar_calendario(mes, anio, mapa):
-    # tamaño y estilos
-    ancho = 1100
-    alto = 820
-    left = 40
-    top = 110
-    cell_w = (ancho - left*2) // 7
+# ---------------------------
+# Calendario navegable y render
+# ---------------------------
+st.subheader("Calendario gráfico")
+col_left, col_mid, col_right = st.columns([1,2,1])
+with col_left:
+    if st.button("⬅ Mes anterior"):
+        st.session_state.mes -= 1
+        if st.session_state.mes == 0:
+            st.session_state.mes = 12
+            st.session_state.anio -= 1
+with col_mid:
+    mes_sel = st.selectbox("Mes", list(range(1,13)), index=st.session_state.mes - 1, format_func=lambda x: calendar.month_name[x])
+    anio_sel = st.number_input("Año", min_value=2024, max_value=2035, value=st.session_state.anio)
+    st.session_state.mes = mes_sel
+    st.session_state.anio = anio_sel
+with col_right:
+    if st.button("Mes siguiente ➡"):
+        st.session_state.mes += 1
+        if st.session_state.mes == 13:
+            st.session_state.mes = 1
+            st.session_state.anio += 1
+
+vista = st.selectbox("Vista", ["Mensual","Semanal"], index=0)
+
+# idiomas esp
+MESES_ES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"]
+DIAS_ES = ["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"]
+
+# dibujar calendario mens/sem
+def dibujar_calendario_mensual(mes, anio, mapa):
+    # canvas
+    ancho = 1000
+    alto = 720
+    margin_x = 40
+    margin_y = 120
+    cell_w = (ancho - margin_x*2) // 7
     cell_h = 110
 
     img = Image.new("RGB", (ancho, alto), "white")
     draw = ImageDraw.Draw(img)
-
-    font_t = cargar_fuente(36)
-    font_header = cargar_fuente(20)
-    font_num = cargar_fuente(18)
+    font_title = cargar_fuente(36)
+    font_header = cargar_fuente(18)
+    font_num = cargar_fuente(16)
     font_name = cargar_fuente(14)
 
-    # Título
-    titulo = f"{calendar.month_name[mes]} {anio}"
-    draw.text((ancho//2, 30), titulo, fill="black", anchor="mm", font=font_t)
+    # titulo centrado
+    titulo = f"{MESES_ES[mes-1]} {anio}"
+    draw.text((ancho//2, 30), titulo, fill="black", anchor="mm", font=font_title)
 
-    # Días de la semana
-    dias_sem = ["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"]
-    for i, d in enumerate(dias_sem):
-        x = left + i*cell_w + cell_w//2
-        draw.text((x, 80), d, fill="black", anchor="mm", font=font_header)
+    # headers dias
+    for i, d in enumerate(DIAS_ES):
+        x = margin_x + i*cell_w + cell_w//2
+        draw.text((x, 85), d, fill="black", anchor="mm", font=font_header)
 
     cal = calendar.monthcalendar(anio, mes)
-
-    y = top
+    y = margin_y
     for semana in cal:
-        x = left
+        x = margin_x
         for dia in semana:
-            rect = [x, y, x+cell_w-6, y+cell_h-6]  # pequeño padding
+            rect = [x+6, y+6, x+cell_w-6, y+cell_h-6]
             if dia == 0:
-                # celda vacía
-                draw.rectangle(rect, outline="#DDD", fill="#FFFFFF")
+                draw.rectangle(rect, outline="#EFEFEF", fill="#FAFAFA")
             else:
                 fecha = datetime.date(anio, mes, dia)
                 # feriado?
                 if fecha in FERIADOS:
                     draw.rectangle(rect, fill="#FF6B6B", outline="#B22222")
                 else:
-                    draw.rectangle(rect, fill="#FFFFFF", outline="#DDD")
+                    draw.rectangle(rect, fill="#FFFFFF", outline="#E6E6E6")
 
-                # si hay vacaciones mostrar hasta 3 nombres (pequeñas barras)
+                # si hay vacaciones mostrar franjas
                 if fecha in mapa:
-                    # si hay más de 3 ocupantes, tomar primeros 3
-                    ocup = mapa[fecha][:3]
-                    # dibujar pequeñas franjas en la parte inferior
-                    stripe_h = 18
+                    ocup = mapa[fecha][:4]  # hasta 4
+                    stripe_h = 16
+                    y0 = y + 28
                     for idx, (nombre, color, sector) in enumerate(ocup):
-                        bx1 = x + 6
-                        by1 = y + 28 + idx*(stripe_h + 4)
-                        bx2 = x + cell_w - 12
+                        bx1 = x + 10
+                        by1 = y0 + idx*(stripe_h+6)
+                        bx2 = x + cell_w - 20
                         by2 = by1 + stripe_h
-                        draw.rectangle([bx1, by1, bx2, by2], fill=color, outline="#444")
-                        # nombre recortado
+                        draw.rectangle([bx1, by1, bx2, by2], fill=color, outline="#555")
                         txt = nombre if len(nombre) <= 18 else nombre[:15] + "..."
-                        draw.text((bx1 + 6, by1 + 2), txt, fill="black", font=font_name)
+                        draw.text((bx1 + 6, by1 + 1), txt, fill="black", font=font_name)
 
-                # número del día arriba a la derecha
-                draw.text((x+cell_w-14, y+6), str(dia), fill="black", anchor="rm", font=font_num)
+                # día número
+                draw.text((x + cell_w - 22, y + 10), str(dia), fill="black", font=font_num)
 
             x += cell_w
         y += cell_h
 
     return img
 
-# renderizar según vista
-if vista == "Mensual":
-    img = dibujar_calendario(st.session_state.mes, st.session_state.anio, mapa_dias)
-    st.image(img, use_column_width=True)
-else:
-    # Vista Semanal: mostrar la semana donde hoy cae o semana seleccionada por usuario
-    # Formular: pedir número de semana del mes (1..n)
-    cal = calendar.monthcalendar(st.session_state.anio, st.session_state.mes)
-    max_sem = len(cal)
-    semana_sel = st.number_input("Semana del mes", min_value=1, max_value=max_sem, value=1)
-    semana = cal[semana_sel-1]
+def dibujar_calendario_semanal(mes, anio, semana_idx, mapa):
+    cal = calendar.monthcalendar(anio, mes)
+    if semana_idx < 1 or semana_idx > len(cal):
+        semana_idx = 1
+    semana = cal[semana_idx-1]
 
-    # construir imagen horizontal pequeña
-    ancho = 1100
-    alto = 320
+    ancho = 1000
+    alto = 360
     img = Image.new("RGB", (ancho, alto), "white")
     draw = ImageDraw.Draw(img)
-    font_t = cargar_fuente(24)
-    font_num = cargar_fuente(18)
+    font_title = cargar_fuente(20)
+    font_num = cargar_fuente(16)
     font_name = cargar_fuente(14)
 
-    # encabezados por día
-    for i, dia in enumerate(["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"]):
-        x = 40 + i*((ancho-80)//7)
-        draw.text((x + ((ancho-80)//14), 20), dia, fill="black", font=font_t)
+    # encabezados dias
+    titulo = f"Semana {semana_idx} - {MESES_ES[mes-1]} {anio}"
+    draw.text((ancho//2, 20), titulo, fill="black", anchor="mm", font=font_title)
 
-    # celdas
-    for i, d in enumerate(semana):
-        x = 40 + i*((ancho-80)//7)
-        rect = [x, 70, x + ((ancho-80)//7) - 10, 270]
-        if d == 0:
+    cell_w = (ancho - 80) // 7
+    x = 40
+    for i, dia in enumerate(semana):
+        rect = [x, 60, x + cell_w - 10, alto - 40]
+        if dia == 0:
             draw.rectangle(rect, fill="#F5F5F5", outline="#DDD")
         else:
-            fecha = datetime.date(st.session_state.anio, st.session_state.mes, d)
+            fecha = datetime.date(anio, mes, dia)
             if fecha in FERIADOS:
                 draw.rectangle(rect, fill="#FF6B6B", outline="#B22222")
             else:
                 draw.rectangle(rect, fill="#FFFFFF", outline="#DDD")
-            # número día
-            draw.text((x+8, 74), str(d), fill="black", font=font_num)
-            if fecha in mapa_dias:
-                occ = mapa_dias[fecha][:5]
-                y_text = 100
+            # número
+            draw.text((x + 8, 66), str(dia), fill="black", font=font_num)
+            if fecha in mapa:
+                occ = mapa[fecha][:6]
+                y_text = 96
                 for (nombre, color, sector) in occ:
-                    draw.rectangle([x+8, y_text, x + ((ancho-80)//7) - 18, y_text+18], fill=color, outline="#333")
-                    txt = nombre if len(nombre) <= 22 else nombre[:19] + "..."
+                    draw.rectangle([x+8, y_text, x+cell_w-20, y_text+18], fill=color, outline="#333")
+                    txt = nombre if len(nombre) <= 26 else nombre[:23] + "..."
                     draw.text((x+12, y_text+2), txt, fill="black", font=font_name)
                     y_text += 22
+        x += cell_w
 
+    return img
+
+# renderizar
+if vista == "Mensual":
+    img = dibujar_calendario_mensual(st.session_state.mes, st.session_state.anio, mapa_dias)
+    st.image(img, use_column_width=True)
+else:
+    cal = calendar.monthcalendar(st.session_state.anio, st.session_state.mes)
+    num_sem = len(cal)
+    semana_sel = st.number_input("Semana del mes", min_value=1, max_value=num_sem, value=1)
+    img = dibujar_calendario_semanal(st.session_state.mes, st.session_state.anio, semana_sel, mapa_dias)
     st.image(img, use_column_width=True)
 
-# -------------------------
-# Footer / ayuda
-# -------------------------
 st.markdown("---")
-st.caption("Reglas: los feriados (fondo rojo) no pueden estar en las puntas de las vacaciones. "
-           "Solapamiento permitido solo si es diferente sector. Los datos se guardan en la sesión de la app.")
+st.caption("Feriados (fondo rojo). Reglas: feriados no pueden estar en las puntas ni adyacentes; "
+           "solapamiento solo si distinto sector. Datos guardados en memoria y opcionalmente en vacations CSV.")
