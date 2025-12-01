@@ -11,7 +11,7 @@ import os
 # ---------------------------
 # Configuración y helpers
 # ---------------------------
-st.set_page_config(page_title="App Vacaciones - Versión B", layout="wide")
+st.set_page_config(page_title="App Vacaciones", layout="wide")
 
 # Fuente segura (DejaVu incluida con Pillow)
 def cargar_fuente(size):
