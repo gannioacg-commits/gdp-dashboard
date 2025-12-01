@@ -5,7 +5,6 @@ import calendar
 import datetime
 import os
 import random
-from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
 
 # ===================================================================
@@ -14,7 +13,6 @@ from PIL import Image, ImageDraw, ImageFont
 ARCHIVO_GLOBAL = "vacaciones_global.csv"
 
 def cargar_registros_globales():
-    """Carga el archivo global si existe."""
     if os.path.exists(ARCHIVO_GLOBAL):
         try:
             df = pd.read_csv(ARCHIVO_GLOBAL)
@@ -24,7 +22,6 @@ def cargar_registros_globales():
     return []
 
 def guardar_registros_globales(lista):
-    """Guarda siempre en el archivo compartido."""
     try:
         pd.DataFrame(lista).to_csv(ARCHIVO_GLOBAL, index=False)
     except Exception as e:
@@ -46,12 +43,14 @@ def cargar_fuente(size, bold=False):
 # ===================================================================
 FERIADOS_STR = {
     # 2025
-    "2025-01-01","2025-03-03","2025-03-04","2025-03-24","2025-04-18","2025-04-19",
-    "2025-05-01","2025-05-25","2025-06-16","2025-06-20","2025-07-09","2025-08-18",
+    "2025-01-01","2025-03-03","2025-03-04","2025-03-24",
+    "2025-04-18","2025-04-19","2025-05-01","2025-05-25",
+    "2025-06-16","2025-06-20","2025-07-09","2025-08-18",
     "2025-10-13","2025-11-17","2025-12-08","2025-12-25",
     # 2026
-    "2026-01-01","2026-02-16","2026-02-17","2026-03-24","2026-04-02","2026-04-03",
-    "2026-05-01","2026-05-25","2026-06-17","2026-06-20","2026-07-09","2026-08-17",
+    "2026-01-01","2026-02-16","2026-02-17","2026-03-24",
+    "2026-04-02","2026-04-03","2026-05-01","2026-05-25",
+    "2026-06-17","2026-06-20","2026-07-09","2026-08-17",
     "2026-10-12","2026-11-23","2026-12-08","2026-12-25"
 }
 FERIADOS = {datetime.datetime.strptime(s, "%Y-%m-%d").date() for s in FERIADOS_STR}
@@ -59,8 +58,11 @@ FERIADOS = {datetime.datetime.strptime(s, "%Y-%m-%d").date() for s in FERIADOS_S
 # ===================================================================
 #                CONFIG GENERAL
 # ===================================================================
-SECTORES = ["LABORATORIO", "PRODUCCION", "COMERCIAL", "FACTURACION", "COMPRAS", "CONTABLE", "SOCIOS"]
-PALETTE = ["#6EC6FF", "#81C784", "#FFF176", "#F48FB1", "#CE93D8", "#FFCC80", "#80CBC4", "#E6EE9C"]
+SECTORES = ["LABORATORIO", "PRODUCCION", "COMERCIAL", "FACTURACION",
+            "COMPRAS", "CONTABLE", "SOCIOS"]
+
+PALETTE = ["#6EC6FF", "#81C784", "#FFF176", "#F48FB1", "#CE93D8",
+           "#FFCC80", "#80CBC4", "#E6EE9C"]
 
 st.set_page_config(page_title="App Vacaciones - Global", layout="wide")
 
@@ -79,36 +81,30 @@ if "anio" not in st.session_state:
 # ===================================================================
 #                Utils
 # ===================================================================
-def es_feriado(fecha: datetime.date) -> bool:
-    return fecha in FERIADOS
-
-def feriado_en_puntas(inicio: datetime.date, fin: datetime.date):
+def feriado_en_puntas(inicio, fin):
     if inicio in FERIADOS:
         return True, f"El día de inicio ({inicio}) es feriado."
     if fin in FERIADOS:
         return True, f"El día final ({fin}) es feriado."
-
     if (inicio - datetime.timedelta(days=1)) in FERIADOS:
-        return True, f"El día anterior a iniciar es feriado."
-
+        return True, "El día anterior al inicio es feriado."
     if (fin + datetime.timedelta(days=1)) in FERIADOS:
-        return True, f"El día siguiente a finalizar es feriado."
-
+        return True, "El día siguiente al fin es feriado."
     return False, ""
 
-def ajustar_inicio_por_fin_de_semana(inicio: datetime.date, dias:int):
+def ajustar_inicio_por_fin_de_semana(inicio, dias):
     inicio_new = inicio
     msg = ""
-    if inicio.weekday() == 5:  # sábado
+    if inicio.weekday() == 5:
         inicio_new = inicio + datetime.timedelta(days=2)
         msg = f"Inicio en sábado → movido al lunes {inicio_new}."
-    elif inicio.weekday() == 6:  # domingo
+    elif inicio.weekday() == 6:
         inicio_new = inicio + datetime.timedelta(days=1)
         msg = f"Inicio en domingo → movido al lunes {inicio_new}."
     fin_new = inicio_new + datetime.timedelta(days=dias - 1)
     return inicio_new, fin_new, msg
 
-def solapamiento_mismo_sector(inicio: datetime.date, fin: datetime.date, sector: str):
+def solapamiento_mismo_sector(inicio, fin, sector):
     for rec in st.session_state.vacaciones:
         if rec["Sector"].upper() != sector.upper():
             continue
@@ -138,30 +134,31 @@ with st.sidebar:
         if not nombre.strip():
             st.error("Ingresá el nombre.")
         else:
-            inicio_aj, fin_aj, msg_adj = ajustar_inicio_por_fin_de_semana(fecha_inicio, dias)
+            inicio_adj, fin_adj, msg_adj = ajustar_inicio_por_fin_de_semana(fecha_inicio, dias)
             if msg_adj:
                 st.info(msg_adj)
 
-            err, msg = feriado_en_puntas(inicio_aj, fin_aj)
+            err, msg = feriado_en_puntas(inicio_adj, fin_adj)
             if err:
                 st.error(msg)
             else:
-                sup, quien = solapamiento_mismo_sector(inicio_aj, fin_aj, sector)
+                sup, quien = solapamiento_mismo_sector(inicio_adj, fin_adj, sector)
                 if sup:
                     st.error(f"Se superpone con {quien}.")
                 else:
-                    rec = {"Nombre": nombre, "Sector": sector,
-                           "Inicio": inicio_aj.isoformat(),
-                           "Fin": fin_aj.isoformat(),
-                           "Color": color}
-
+                    rec = {
+                        "Nombre": nombre,
+                        "Sector": sector,
+                        "Inicio": inicio_adj.isoformat(),
+                        "Fin": fin_adj.isoformat(),
+                        "Color": color
+                    }
                     st.session_state.vacaciones.append(rec)
                     guardar_registros_globales(st.session_state.vacaciones)
-
-                    st.success(f"Registrado: {nombre} ({inicio_aj} → {fin_aj})")
+                    st.success(f"Registrado correctamente")
 
 # ===================================================================
-#                Tabla y eliminación
+#                Tabla + Eliminar
 # ===================================================================
 st.title("📅 App de Vacaciones — Registros Globales")
 
@@ -182,7 +179,7 @@ else:
         st.success(f"Eliminado: {eliminado['Nombre']}")
 
 # ===================================================================
-#                Construcción calendario
+#                Construye mapa días
 # ===================================================================
 def construir_map_dias():
     mapa = {}
@@ -201,8 +198,9 @@ mapa_dias = construir_map_dias()
 #                Calendario reducido
 # ===================================================================
 def generar_calendario_reducido(mes, anio, mapa, feriados):
-    nombres_meses = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto",
-                     "Septiembre","Octubre","Noviembre","Diciembre"]
+
+    nombres_meses = ["Enero","Febrero","Marzo","Abril","Mayo","Junio",
+                     "Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"]
     dias_sem = ["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"]
 
     cell_w = 86
@@ -245,7 +243,7 @@ def generar_calendario_reducido(mes, anio, mapa, feriados):
                 if fecha in feriados:
                     draw.rectangle(rect, fill="#FF6B6B", outline="#B22222")
                 else:
-                    draw.rectangle(rect, fill="#FFF", outline="#E6E6E6")
+                    draw.rectangle(rect, fill="#FFF", outline="#CCC")
 
                 if fecha in mapa:
                     for i, (nombre, color, _) in enumerate(mapa[fecha][:3]):
@@ -264,14 +262,35 @@ def generar_calendario_reducido(mes, anio, mapa, feriados):
     return img
 
 # ===================================================================
+#                Navegación de meses
+# ===================================================================
+cola1, cola2, cola3 = st.columns([1, 1, 1])
+
+with cola1:
+    if st.button("⬅ Mes anterior"):
+        st.session_state.mes -= 1
+        if st.session_state.mes == 0:
+            st.session_state.mes = 12
+            st.session_state.anio -= 1
+
+with cola3:
+    if st.button("Mes siguiente ➡"):
+        st.session_state.mes += 1
+        if st.session_state.mes == 13:
+            st.session_state.mes = 1
+            st.session_state.anio += 1
+
+# ===================================================================
 #                Render calendario
 # ===================================================================
-st.subheader("Calendario Global (reducido)")
+st.subheader("Calendario Global (Reducido)")
 
-img = generar_calendario_reducido(st.session_state.mes,
-                                  st.session_state.anio,
-                                  mapa_dias, FERIADOS)
+img = generar_calendario_reducido(
+    st.session_state.mes,
+    st.session_state.anio,
+    mapa_dias,
+    FERIADOS
+)
 
 st.image(img, use_column_width=False, width=min(900, img.width))
-
 
