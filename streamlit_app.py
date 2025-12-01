@@ -147,7 +147,7 @@ with st.sidebar:
 # -------------------------
 # Main UI: registros y acciones
 # -------------------------
-st.title("📅 App de Vacaciones — Calendario reducido y alineado")
+st.title("📅 App de Vacaciones")
 
 st.subheader("Registros actuales")
 if len(st.session_state.vacaciones) == 0:
