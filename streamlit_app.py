@@ -1,139 +1,186 @@
-
 import streamlit as st
 import pandas as pd
-from datetime import date, timedelta
-import random
+import datetime
 import calendar
-
-ARCHIVO = "vacaciones.csv"
-
-FERIADOS = {
-    "2025-01-01","2025-02-03","2025-02-04","2025-03-04","2025-03-24",
-    "2025-04-18","2025-05-01","2025-05-25","2025-06-20","2025-07-09",
-    "2025-12-08","2025-12-25"
-}
-
-SECTORES = ["LABORATORIO", "PRODUCCION", "COMERCIAL", "FACTURACION", "COMPRAS", "CONTABLE", "SOCIOS"]
-
-def cargar_base():
-    try:
-        return pd.read_csv(ARCHIVO)
-    except:
-        df = pd.DataFrame(columns=["Nombre", "Sector", "Desde", "Hasta", "Días", "Color"])
-        df.to_csv(ARCHIVO, index=False)
-        return df
-
-df = cargar_base()
-
-def hay_superposicion(df, inicio, fin, sector):
-    for _, row in df.iterrows():
-        if row["Sector"] != sector:
-            continue
-        start = pd.to_datetime(row["Desde"])
-        end = pd.to_datetime(row["Hasta"])
-        if (inicio <= end) and (fin >= start):
-            return True, row["Nombre"]
-    return False, None
-
-def feriado_en_punta(inicio, fin):
-    if str(inicio) in FERIADOS: 
-        return "El día de inicio es feriado"
-    if str(fin) in FERIADOS:
-        return "El día de fin es feriado"
-    return None
+from PIL import Image, ImageDraw, ImageFont
 
 st.set_page_config(page_title="Calendario de Vacaciones", layout="wide")
-st.title("📅 Calendario de Vacaciones – Empresa")
 
-st.sidebar.header("Registrar vacaciones")
+# -------------------------------------------------------------------
+# FERIADOS 2025 & 2026 - ARGENTINA
+# -------------------------------------------------------------------
+FERIADOS = {
+    2025: [
+        "2025-01-01", "2025-03-03", "2025-03-04", "2025-03-24", "2025-04-18",
+        "2025-04-19", "2025-05-01", "2025-05-25", "2025-06-16", "2025-06-20",
+        "2025-07-09", "2025-08-18", "2025-10-13", "2025-11-17", "2025-12-08",
+        "2025-12-25"
+    ],
+    2026: [
+        "2026-01-01", "2026-02-16", "2026-02-17", "2026-03-24", "2026-04-03",
+        "2026-04-04", "2026-05-01", "2026-05-25", "2026-06-20", "2026-07-09",
+        "2026-08-17", "2026-10-12", "2026-11-16", "2026-12-08", "2026-12-25"
+    ]
+}
 
-nombre = st.sidebar.text_input("Empleado:")
-sector = st.sidebar.selectbox("Sector:", SECTORES)
-fecha_inicio = st.sidebar.date_input("Inicio:", value=date.today())
 
-opcion = st.sidebar.radio("Duración:", ["1 semana (7 días)", "2 semanas (14 días)"])
-dias = 7 if opcion.startswith("1") else 14
+def es_feriado(fecha: datetime.date):
+    return fecha.strftime("%Y-%m-%d") in FERIADOS.get(fecha.year, [])
 
-colores = ["#6EC6FF", "#81C784", "#FFF176", "#F48FB1", "#CE93D8", "#FFCC80"]
-color = random.choice(colores)
 
-if st.sidebar.button("Registrar vacaciones"):
-    if nombre.strip() == "":
-        st.sidebar.error("Ingresar nombre.")
+# -------------------------------------------------------------------
+# MANEJO DE ARCHIVO
+# -------------------------------------------------------------------
+FILE = "vacaciones.csv"
+
+def cargar_datos():
+    try:
+        return pd.read_csv(FILE)
+    except:
+        return pd.DataFrame(columns=["Empleado", "Sector", "Inicio", "Fin", "Color"])
+
+def guardar_datos(df):
+    df.to_csv(FILE, index=False)
+
+df_vac = cargar_datos()
+
+
+# -------------------------------------------------------------------
+# VALIDACIONES
+# -------------------------------------------------------------------
+def validar_feriados_puntas(inicio, fin):
+    """Los feriados NO pueden estar al inicio ni al final, solo dentro del rango."""
+    if es_feriado(inicio):
+        return False, "El primer día NO puede ser feriado."
+    if es_feriado(fin):
+        return False, "El último día NO puede ser feriado."
+    return True, ""
+
+def validar_solapamiento(inicio, fin, sector, df):
+    df_sector = df[df["Sector"] == sector]
+    for _, row in df_sector.iterrows():
+        r_inicio = datetime.datetime.strptime(row["Inicio"], "%Y-%m-%d").date()
+        r_fin = datetime.datetime.strptime(row["Fin"], "%Y-%m-%d").date()
+        if not (fin < r_inicio or inicio > r_fin):
+            return False, f"Solapamiento con {row['Empleado']} del mismo sector."
+    return True, ""
+
+
+# -------------------------------------------------------------------
+# GENERADOR DE CALENDARIO GRAFICO CON NAVEGACIÓN
+# -------------------------------------------------------------------
+def generar_calendario(mes, anio, df):
+    w, h = 900, 650
+    img = Image.new("RGB", (w, h), "white")
+    draw = ImageDraw.Draw(img)
+
+    font_day = ImageFont.load_default()
+    font_header = ImageFont.load_default()
+
+    nombre_mes = calendar.month_name[mes].upper()
+    draw.text((10, 10), f"{nombre_mes} {anio}", fill="black", font=font_header)
+
+    # Días de la semana
+    dias = ["L", "M", "M", "J", "V", "S", "D"]
+    for i, d in enumerate(dias):
+        draw.text((50 + i * 110, 50), d, fill="black", font=font_header)
+
+    cal = calendar.monthcalendar(anio, mes)
+
+    for fila, semana in enumerate(cal):
+        for col, dia in enumerate(semana):
+            x = 40 + col * 110
+            y = 100 + fila * 80
+            rect = [x, y, x + 100, y + 70]
+
+            # Feriados en rojo
+            if dia != 0:
+                fecha = datetime.date(anio, mes, dia)
+                if es_feriado(fecha):
+                    draw.rectangle(rect, fill="#FFB3B3")
+
+            # Vacaciones: colorear
+            for _, row in df.iterrows():
+                inicio = datetime.datetime.strptime(row["Inicio"], "%Y-%m-%d").date()
+                fin = datetime.datetime.strptime(row["Fin"], "%Y-%m-%d").date()
+                if dia != 0 and inicio <= fecha <= fin:
+                    draw.rectangle(rect, fill=row["Color"])
+
+            draw.rectangle(rect, outline="black")
+
+            if dia != 0:
+                draw.text((x + 5, y + 5), str(dia), fill="black", font=font_day)
+
+    return img
+
+
+# -------------------------------------------------------------------
+# UI
+# -------------------------------------------------------------------
+st.title("📅 Calendario de Vacaciones – Multi Sector")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    empleado = st.text_input("Empleado")
+    sector = st.selectbox("Sector", ["LABORATORIO", "PRODUCCION", "COMERCIAL", "FACTURACION", "COMPRAS", "CONTABLE", "SOCIOS"])
+    color = st.color_picker("Color para marcar", "#A2D2FF")
+
+with col2:
+    modo = st.selectbox("Tipo de vacaciones", ["1 semana", "2 semanas"])
+    inicio = st.date_input("Fecha de inicio")
+
+if st.button("Registrar vacaciones"):
+    if modo == "1 semana":
+        fin = inicio + datetime.timedelta(days=6)
     else:
-        fecha_fin = fecha_inicio + timedelta(days=dias - 1)
+        fin = inicio + datetime.timedelta(days=13)
 
-        msj = feriado_en_punta(fecha_inicio, fecha_fin)
-        if msj:
-            st.sidebar.error("❌ No permitido: " + msj)
+    ok, msg = validar_feriados_puntas(inicio, fin)
+    if not ok:
+        st.error(msg)
+    else:
+        ok2, msg2 = validar_solapamiento(inicio, fin, sector, df_vac)
+        if not ok2:
+            st.error(msg2)
         else:
-            superpuesto, quien = hay_superposicion(df, fecha_inicio, fecha_fin, sector)
-            if superpuesto:
-                st.sidebar.error(f"❌ Se superpone con {quien}.")
-            else:
-                nuevo = pd.DataFrame({
-                    "Nombre":[nombre], "Sector":[sector],
-                    "Desde":[fecha_inicio], "Hasta":[fecha_fin],
-                    "Días":[dias], "Color":[color]
-                })
-                df = pd.concat([df, nuevo], ignore_index=True)
-                df.to_csv(ARCHIVO, index=False)
-                st.sidebar.success("✔ Registrado correctamente")
+            df_vac.loc[len(df_vac)] = [empleado, sector, str(inicio), str(fin), color]
+            guardar_datos(df_vac)
+            st.success("Vacaciones registradas.")
 
-st.subheader("🗂 Tabla de registros")
-st.dataframe(df)
 
-st.subheader("🗑 Eliminar vacaciones")
-if not df.empty:
-    empleado_borrar = st.selectbox("Seleccionar registro:", df["Nombre"] + " (" + df["Desde"] + ")")
+# ------ BORRAR REGISTROS ------
+st.subheader("🗑 Borrar vacaciones")
+if len(df_vac) > 0:
+    borrar = st.selectbox("Seleccionar registro", df_vac.index)
     if st.button("Eliminar"):
-        idx = df[df["Nombre"] + " (" + df["Desde"] + ")" == empleado_borrar].index
-        df = df.drop(idx)
-        df.to_csv(ARCHIVO, index=False)
-        st.success("🗑 Registro eliminado.")
+        df_vac = df_vac.drop(borrar)
+        guardar_datos(df_vac)
+        st.success("Eliminado.")
 
-st.subheader("📆 Calendario estilo Google Calendar")
+# ------ CALENDARIO GRAFICO CON NAVEGACIÓN ------
+st.subheader("📆 Calendario gráfico de vacaciones")
 
-def mostrar_mes(m, a):
-    cal = calendar.monthcalendar(a, m)
-    st.markdown(f"### {calendar.month_name[m]} {a}")
+if "mes" not in st.session_state:
+    hoy = datetime.date.today()
+    st.session_state.mes = hoy.month
+    st.session_state.anio = hoy.year
 
-    df_mes = pd.DataFrame(cal, columns=["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"])
-    for col in df_mes.columns:
-        df_mes[col] = df_mes[col].apply(lambda x: "" if x == 0 else x)
+colA, colB, colC = st.columns([1,3,1])
 
-    eventos = {}
-    for _, row in df.iterrows():
-        inicio = pd.to_datetime(row["Desde"])
-        fin = pd.to_datetime(row["Hasta"])
-        for d in pd.date_range(inicio, fin):
-            if d.month == m and d.year == a:
-                eventos[d.day] = row["Color"]
+with colA:
+    if st.button("⬅ Mes anterior"):
+        st.session_state.mes -= 1
+        if st.session_state.mes == 0:
+            st.session_state.mes = 12
+            st.session_state.anio -= 1
 
-    feriados_mes = {int(f.split("-")[2]) for f in FERIADOS if int(f.split("-")[1]) == m}
+with colC:
+    if st.button("Mes siguiente ➡"):
+        st.session_state.mes += 1
+        if st.session_state.mes == 13:
+            st.session_state.mes = 1
+            st.session_state.anio += 1
 
-    st.write("")
-
-    for semana in cal:
-        cols = st.columns(7)
-        dias = ["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"]
-        for i, num in enumerate(semana):
-            if num == 0:
-                cols[i].markdown(" ")
-            else:
-                bg = "#FFFFFF"
-                border = ""
-                txt = f"<b>{num}</b>"
-                if num in feriados_mes:
-                    bg = "#FFD1D1"
-                    border = "3px solid red"
-                if num in eventos:
-                    bg = eventos[num]
-                    border = "2px solid black"
-                cols[i].markdown(
-                    f"<div style='background:{bg}; padding:10px; text-align:center; border-radius:6px; border:{border}'>{txt}</div>",
-                    unsafe_allow_html=True
-                )
-
-hoy = date.today()
-mostrar_mes(hoy.month, hoy.year)
+img = generar_calendario(st.session_state.mes, st.session_state.anio, df_vac)
+st.image(img, use_column_width=True)
