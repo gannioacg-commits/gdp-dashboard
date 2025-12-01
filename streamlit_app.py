@@ -277,7 +277,7 @@ def generar_calendario_reducido(mes, anio, mapa_dias, feriados):
     return img
 
 # controles calendario y render
-st.subheader("Calendario (reducido)")
+st.subheader("Calendario")
 
 c1, c2, c3 = st.columns([1,2,1])
 with c1:
@@ -305,6 +305,5 @@ st.image(img, use_column_width=False, width=min(900, img.width))
 
 st.markdown("""
 **Leyenda:**  
-- 🟥 Feriado (fondo rojo) — no puede ser punta de vacaciones.  
-- 🟦 Franjas = empleados con vacaciones en ese día.  
+- 🟥 Feriado (fondo rojo) — no puede ser punta de vacaciones.    
 """)
