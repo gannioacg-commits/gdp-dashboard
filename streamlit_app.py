@@ -1,151 +1,207 @@
 import streamlit as st
 import pandas as pd
-import math
-from pathlib import Path
+from datetime import date, timedelta, datetime
+import random
+import calendar
 
-# Set the title and favicon that appear in the Browser's tab bar.
-st.set_page_config(
-    page_title='GDP dashboard',
-    page_icon=':earth_americas:', # This is an emoji shortcode. Could be a URL too.
-)
+ARCHIVO = "vacaciones.csv"
 
-# -----------------------------------------------------------------------------
-# Declare some useful functions.
-
-@st.cache_data
-def get_gdp_data():
-    """Grab GDP data from a CSV file.
-
-    This uses caching to avoid having to read the file every time. If we were
-    reading from an HTTP endpoint instead of a file, it's a good idea to set
-    a maximum age to the cache with the TTL argument: @st.cache_data(ttl='1d')
-    """
-
-    # Instead of a CSV on disk, you could read from an HTTP endpoint here too.
-    DATA_FILENAME = Path(__file__).parent/'data/gdp_data.csv'
-    raw_gdp_df = pd.read_csv(DATA_FILENAME)
-
-    MIN_YEAR = 1960
-    MAX_YEAR = 2022
-
-    # The data above has columns like:
-    # - Country Name
-    # - Country Code
-    # - [Stuff I don't care about]
-    # - GDP for 1960
-    # - GDP for 1961
-    # - GDP for 1962
-    # - ...
-    # - GDP for 2022
-    #
-    # ...but I want this instead:
-    # - Country Name
-    # - Country Code
-    # - Year
-    # - GDP
-    #
-    # So let's pivot all those year-columns into two: Year and GDP
-    gdp_df = raw_gdp_df.melt(
-        ['Country Code'],
-        [str(x) for x in range(MIN_YEAR, MAX_YEAR + 1)],
-        'Year',
-        'GDP',
-    )
-
-    # Convert years from string to integers
-    gdp_df['Year'] = pd.to_numeric(gdp_df['Year'])
-
-    return gdp_df
-
-gdp_df = get_gdp_data()
-
-# -----------------------------------------------------------------------------
-# Draw the actual page
-
-# Set the title that appears at the top of the page.
-'''
-# :earth_americas: GDP dashboard
-
-Browse GDP data from the [World Bank Open Data](https://data.worldbank.org/) website. As you'll
-notice, the data only goes to 2022 right now, and datapoints for certain years are often missing.
-But it's otherwise a great (and did I mention _free_?) source of data.
-'''
-
-# Add some spacing
-''
-''
-
-min_value = gdp_df['Year'].min()
-max_value = gdp_df['Year'].max()
-
-from_year, to_year = st.slider(
-    'Which years are you interested in?',
-    min_value=min_value,
-    max_value=max_value,
-    value=[min_value, max_value])
-
-countries = gdp_df['Country Code'].unique()
-
-if not len(countries):
-    st.warning("Select at least one country")
-
-selected_countries = st.multiselect(
-    'Which countries would you like to view?',
-    countries,
-    ['DEU', 'FRA', 'GBR', 'BRA', 'MEX', 'JPN'])
-
-''
-''
-''
-
-# Filter the data
-filtered_gdp_df = gdp_df[
-    (gdp_df['Country Code'].isin(selected_countries))
-    & (gdp_df['Year'] <= to_year)
-    & (from_year <= gdp_df['Year'])
+SECTORES = [
+    "LABORATORIO", "PRODUCCION", "COMERCIAL",
+    "FACTURACION", "COMPRAS", "CONTABLE", "SOCIOS"
 ]
 
-st.header('GDP over time', divider='gray')
+# -------------------------
+# Cargar o crear archivo
+# -------------------------
+def cargar_base():
+    try:
+        df = pd.read_csv(ARCHIVO)
+        if "Sector" not in df.columns:
+            df["Sector"] = ""
+        return df
+    except:
+        df = pd.DataFrame(columns=[
+            "Nombre", "Sector", "Desde", "Hasta", "Días", "Color"
+        ])
+        df.to_csv(ARCHIVO, index=False)
+        return df
 
-''
+df = cargar_base()
 
-st.line_chart(
-    filtered_gdp_df,
-    x='Year',
-    y='GDP',
-    color='Country Code',
-)
+# -------------------------
+# Comprobar superposición
+# -------------------------
+def hay_superposicion(df, inicio, fin, sector_empleado):
+    if hasattr(inicio, "date"):
+        inicio = inicio.date()
+    if hasattr(fin, "date"):
+        fin = fin.date()
 
-''
-''
+    for _, row in df.iterrows():
+        start = pd.to_datetime(row["Desde"]).date()
+        end = pd.to_datetime(row["Hasta"]).date()
+        sector_row = row.get("Sector", "")
+
+        # Solo bloquear si es el mismo sector
+        if sector_row.strip().upper() != sector_empleado.strip().upper():
+            continue
+
+        if (inicio <= end) and (fin >= start):
+            return True, row["Nombre"]
+
+    return False, None
 
 
-first_year = gdp_df[gdp_df['Year'] == from_year]
-last_year = gdp_df[gdp_df['Year'] == to_year]
+# -------------------------
+# Configuración
+# -------------------------
+st.set_page_config(page_title="Calendario de Vacaciones", layout="wide")
+st.title("📅 Calendario de Vacaciones")
 
-st.header(f'GDP in {to_year}', divider='gray')
+# -------------------------
+# FORMULARIO REGISTRO
+# -------------------------
+st.sidebar.header("Registrar vacaciones")
 
-''
+nombre = st.sidebar.text_input("Nombre del empleado:")
+sector = st.sidebar.selectbox("Sector del empleado:", SECTORES)
+fecha_inicio = st.sidebar.date_input("Fecha de inicio:", value=date.today())
 
-cols = st.columns(4)
+opcion = st.sidebar.radio("Duración:", ["1 semana (7 días)", "2 semanas (14 días)"])
+dias = 7 if opcion.startswith("1") else 14
 
-for i, country in enumerate(selected_countries):
-    col = cols[i % len(cols)]
+colores = ["lightblue", "lightgreen", "lightyellow", "lightpink", "lavender", "peachpuff"]
+color = random.choice(colores)
 
-    with col:
-        first_gdp = first_year[first_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-        last_gdp = last_year[last_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
+# -------------------------
+# Botón registrar
+# -------------------------
+if st.sidebar.button("Registrar vacaciones"):
 
-        if math.isnan(first_gdp):
-            growth = 'n/a'
-            delta_color = 'off'
+    if nombre.strip() == "":
+        st.sidebar.error("Ingresá un nombre.")
+    else:
+        fecha_fin = fecha_inicio + timedelta(days=dias - 1)
+        superpuesto, quien = hay_superposicion(df, fecha_inicio, fecha_fin, sector)
+
+        if superpuesto:
+            st.sidebar.error(f"❌ Se superpone con {quien} (mismo sector).")
         else:
-            growth = f'{last_gdp / first_gdp:,.2f}x'
-            delta_color = 'normal'
+            nuevo = pd.DataFrame({
+                "Nombre": [nombre],
+                "Sector": [sector],
+                "Desde": [fecha_inicio],
+                "Hasta": [fecha_fin],
+                "Días": [dias],
+                "Color": [color],
+            })
 
-        st.metric(
-            label=f'{country} GDP',
-            value=f'{last_gdp:,.0f}B',
-            delta=growth,
-            delta_color=delta_color
+            df = pd.concat([df, nuevo], ignore_index=True)
+            df.to_csv(ARCHIVO, index=False)
+            st.sidebar.success("✔ Vacaciones registradas correctamente.")
+
+
+# -------------------------
+# ELIMINAR VACACIONES
+# -------------------------
+st.sidebar.header("Eliminar vacaciones")
+
+if len(df) > 0:
+    empleados = df["Nombre"].unique()
+    empleado_borrar = st.sidebar.selectbox("Seleccioná un empleado:", empleados)
+
+    if st.sidebar.button("🗑 Borrar vacaciones"):
+        df = df[df["Nombre"] != empleado_borrar]
+        df.to_csv(ARCHIVO, index=False)
+        st.sidebar.success(f"✔ Vacaciones de {empleado_borrar} eliminadas.")
+else:
+    st.sidebar.info("No hay vacaciones registradas.")
+
+
+# -------------------------
+# TABLA COMPLETA
+# -------------------------
+st.subheader("📄 Tabla de vacaciones registradas")
+
+if df.empty:
+    st.info("Todavía no hay vacaciones registradas.")
+else:
+    st.dataframe(df)
+
+
+# -------------------------
+# CALENDARIO GRÁFICO
+# -------------------------
+st.subheader("📆 Calendario gráfico por mes")
+
+# Seleccionar mes y año
+col1, col2 = st.columns(2)
+año = col1.number_input("Año:", min_value=2020, max_value=2050, value=date.today().year)
+mes = col2.selectbox("Mes:", list(range(1, 13)), index=date.today().month - 1)
+
+# Crear matriz calendario
+cal = calendar.monthcalendar(año, mes)
+
+# Expandir datos por día
+df_dias = []
+
+for _, row in df.iterrows():
+    ini = pd.to_datetime(row["Desde"]).date()
+    fin = pd.to_datetime(row["Hasta"]).date()
+
+    actual = ini
+    while actual <= fin:
+        df_dias.append({
+            "Fecha": actual,
+            "Nombre": row["Nombre"],
+            "Color": row["Color"]
+        })
+        actual += timedelta(days=1)
+
+df_dias = pd.DataFrame(df_dias)
+
+# Render calendario
+st.write(f"### {calendar.month_name[mes]} {año}")
+
+for semana in cal:
+    cols = st.columns(7)
+    for i, dia in enumerate(semana):
+        if dia == 0:
+            cols[i].markdown("<div style='height:70px'></div>", unsafe_allow_html=True)
+            continue
+
+        fecha_actual = date(año, mes, dia)
+
+        ocupantes = df_dias[df_dias["Fecha"] == fecha_actual]
+
+        if len(ocupantes) == 0:
+            bg = "white"
+            contenido = f"<b>{dia}</b><br><span style='color:gray'>Libre</span>"
+        else:
+            # Si hay varios empleados ese día, mostrar hasta 3 colores
+            colors_html = "".join(
+                [f"<div style='width:12px;height:12px;background:{c};display:inline-block;margin-right:3px'></div>"
+                 for c in ocupantes['Color'].head(3)]
+            )
+            nombres = "<br>".join(ocupantes["Nombre"].unique())
+
+            bg = "#f0f0f0"
+            contenido = f"<b>{dia}</b><br>{colors_html}<br>{nombres}"
+
+        cols[i].markdown(
+            f"""
+            <div style="
+                border:1px solid #ccc;
+                padding:6px;
+                height:110px;
+                background:{bg};
+                border-radius:5px;
+                text-align:center;
+                font-size:13px;
+            ">
+                {contenido}
+            </div>
+            """,
+            unsafe_allow_html=True
         )
