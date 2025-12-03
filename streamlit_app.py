@@ -5,27 +5,58 @@ import calendar
 import datetime
 import os
 import random
+import shutil
 from PIL import Image, ImageDraw, ImageFont
 
 # ===================================================================
 #                CONFIG: ARCHIVO GLOBAL COMPARTIDO
 # ===================================================================
 ARCHIVO_GLOBAL = "vacaciones_global.csv"
+ARCHIVO_BACKUP = "vacaciones_global.csv.bak"
 
 def cargar_registros_globales():
-    if os.path.exists(ARCHIVO_GLOBAL):
+    """
+    Carga segura:
+    - Evita leer archivos vacíos
+    - Evita destruir datos si el CSV está corrupto
+    """
+    if os.path.exists(ARCHIVO_GLOBAL) and os.path.getsize(ARCHIVO_GLOBAL) > 10:
         try:
             df = pd.read_csv(ARCHIVO_GLOBAL)
+            if df.empty:
+                return []
             return df.to_dict(orient="records")
         except:
+            # Si falla lectura, intenta backup
+            if os.path.exists(ARCHIVO_BACKUP):
+                try:
+                    df = pd.read_csv(ARCHIVO_BACKUP)
+                    return df.to_dict(orient="records")
+                except:
+                    return []
             return []
     return []
 
 def guardar_registros_globales(lista):
+    """
+    Guardado seguro:
+    - Hace backup automático antes de escribir
+    - Evita guardar lista vacía para no borrar registros por error
+    """
+    if len(lista) == 0:
+        st.warning("Protección activada: no se guarda un archivo vacío.")
+        return
+
     try:
+        # Hacer backup ANTES de sobreescribir
+        if os.path.exists(ARCHIVO_GLOBAL):
+            shutil.copy(ARCHIVO_GLOBAL, ARCHIVO_BACKUP)
+
         pd.DataFrame(lista).to_csv(ARCHIVO_GLOBAL, index=False)
+
     except Exception as e:
         st.error(f"Error guardando archivo global: {e}")
+
 
 # ===================================================================
 #                Helpers (fuente segura)
@@ -37,6 +68,7 @@ def cargar_fuente(size, bold=False):
         return ImageFont.truetype("DejaVuSans.ttf", size)
     except:
         return ImageFont.load_default()
+
 
 # ===================================================================
 #                Feriados 2025 + 2026
@@ -66,6 +98,7 @@ PALETTE = ["#6EC6FF", "#81C784", "#FFF176", "#F48FB1", "#CE93D8",
 
 st.set_page_config(page_title="App Vacaciones - Global", layout="wide")
 
+
 # ===================================================================
 #                Session State INIT
 # ===================================================================
@@ -77,6 +110,7 @@ if "mes" not in st.session_state:
     st.session_state.mes = hoy.month
 if "anio" not in st.session_state:
     st.session_state.anio = hoy.year
+
 
 # ===================================================================
 #                Utils
@@ -113,6 +147,7 @@ def solapamiento_mismo_sector(inicio, fin, sector):
         if (inicio <= rf) and (fin >= ri):
             return True, rec["Nombre"]
     return False, None
+
 
 # ===================================================================
 #                Sidebar — Registrar vacaciones
@@ -157,6 +192,7 @@ with st.sidebar:
                     guardar_registros_globales(st.session_state.vacaciones)
                     st.success(f"Registrado correctamente")
 
+
 # ===================================================================
 #                Tabla + Eliminar
 # ===================================================================
@@ -178,6 +214,7 @@ else:
         guardar_registros_globales(st.session_state.vacaciones)
         st.success(f"Eliminado: {eliminado['Nombre']}")
 
+
 # ===================================================================
 #                Construye mapa días
 # ===================================================================
@@ -193,6 +230,7 @@ def construir_map_dias():
     return mapa
 
 mapa_dias = construir_map_dias()
+
 
 # ===================================================================
 #                Calendario reducido
@@ -261,6 +299,7 @@ def generar_calendario_reducido(mes, anio, mapa, feriados):
 
     return img
 
+
 # ===================================================================
 #                Navegación de meses
 # ===================================================================
@@ -280,6 +319,7 @@ with cola3:
             st.session_state.mes = 1
             st.session_state.anio += 1
 
+
 # ===================================================================
 #                Render calendario
 # ===================================================================
@@ -293,4 +333,3 @@ img = generar_calendario_reducido(
 )
 
 st.image(img, use_column_width=False, width=min(900, img.width))
-
