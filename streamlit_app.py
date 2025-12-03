@@ -6,6 +6,7 @@ import datetime
 import os
 import random
 import shutil
+import base64
 from PIL import Image, ImageDraw, ImageFont
 
 # ===================================================================
@@ -15,24 +16,112 @@ ARCHIVO_GLOBAL = "vacaciones_global.csv"
 ARCHIVO_BACKUP = "vacaciones_global.csv.bak"
 
 # ===================================================================
-#                CONFIG: SONIDOS
+#                RUTAS POSIBLES DE LOS AUDIOS (orden de prioridad)
 # ===================================================================
-SONIDO_ERROR = "WhatsApp Ptt 2025-12-03 at 3.25.14 PM.ogg"
-SONIDO_OK    = "WhatsApp Audio 2025-11-18 at 10.12.57 AM.ogg"
+# Rutas donde ya subiste los audios en el entorno (ej: /mnt/data)
+POSSIBLE_PATHS = [
+    "/mnt/data/WhatsApp Ptt 2025-12-03 at 3.25.14 PM.ogg",
+    "/mnt/data/WhatsApp Audio 2025-11-18 at 10.12.57 AM.ogg",
+    # rutas locales relativas (si decidís guardarlos al lado del app.py o en data/)
+    "WhatsApp Ptt 2025-12-03 at 3.25.14 PM.ogg",
+    "WhatsApp Audio 2025-11-18 at 10.12.57 AM.ogg",
+    "data/WhatsApp Ptt 2025-12-03 at 3.25.14 PM.ogg",
+    "data/WhatsApp Audio 2025-11-18 at 10.12.57 AM.ogg",
+    "audio/WhatsApp Ptt 2025-12-03 at 3.25.14 PM.ogg",
+    "audio/WhatsApp Audio 2025-11-18 at 10.12.57 AM.ogg",
+]
 
+# ===================================================================
+#                Helpers para cargar/embeder audio (Base64)
+# ===================================================================
+def file_to_base64_dataurl(path):
+    """Convierte un archivo de audio local a data-url base64 (tipo audio/ogg)."""
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+        b64 = base64.b64encode(data).decode()
+        # Intentamos detectar el tipo por extensión (ogg/mp3/wav)
+        ext = os.path.splitext(path)[1].lower()
+        if ext == ".mp3":
+            mime = "audio/mpeg"
+        elif ext == ".wav":
+            mime = "audio/wav"
+        else:
+            mime = "audio/ogg"
+        return f"data:{mime};base64,{b64}"
+    except Exception:
+        return None
+
+def find_and_load_audio(preferred_name_fragments):
+    """
+    Busca en POSSIBLE_PATHS un archivo que contenga alguno de los fragments y lo convierte a data-url.
+    preferred_name_fragments: list of strings to match in file name (e.g. ['Ptt 2025-12-03', 'Audio 2025-11-18'])
+    """
+    for frag in preferred_name_fragments:
+        for p in POSSIBLE_PATHS:
+            if frag in p and os.path.exists(p):
+                url = file_to_base64_dataurl(p)
+                if url:
+                    return url
+    # fallback: try any file in POSSIBLE_PATHS existing
+    for p in POSSIBLE_PATHS:
+        if os.path.exists(p):
+            url = file_to_base64_dataurl(p)
+            if url:
+                return url
+    return None
+
+# Intentamos cargar ambos audios desde las rutas conocidas (orden lógico)
+SONIDO_ERROR_DATAURL = find_and_load_audio(["Ptt 2025-12-03", "Ptt 2025-12-03 at 3.25.14"])
+SONIDO_OK_DATAURL = find_and_load_audio(["Audio 2025-11-18", "10.12.57"])
+
+# Si no se encontraron y querés, podés pegar aquí directamente el data-url como string:
+# SONIDO_ERROR_DATAURL = "data:audio/ogg;base64,...."
+# SONIDO_OK_DATAURL = "data:audio/ogg;base64,...."
+
+def reproducir_dataurl(dataurl):
+    """Inserta un tag <audio autoplay> con el dataurl. Usa st.markdown unsafe."""
+    if not dataurl:
+        return
+    # Autoplay only works reliably if el browser permite el audio (algunos requieren interacción)
+    st.markdown(
+        f"""
+        <audio autoplay>
+            <source src="{dataurl}">
+        </audio>
+        """,
+        unsafe_allow_html=True
+    )
 
 def reproducir_error():
-    try:
-        st.audio(open(SONIDO_ERROR, "rb").read(), format="audio/ogg")
-    except:
-        pass
-
+    if SONIDO_ERROR_DATAURL:
+        reproducir_dataurl(SONIDO_ERROR_DATAURL)
+    else:
+        # fallback: si no hay dataurl, no romper: puedes optar por st.audio si archivo está presente
+        # (intento reproducir desde archivo si existe)
+        for p in POSSIBLE_PATHS:
+            if "Ptt" in p and os.path.exists(p):
+                try:
+                    st.audio(open(p, "rb").read(), format="audio/ogg")
+                    return
+                except:
+                    pass
+        # si no hay nada, no hace nada
+        st.warning("")  # silencioso, evita mostrar error molesto
 
 def reproducir_ok():
-    try:
-        st.audio(open(SONIDO_OK, "rb").read(), format="audio/ogg")
-    except:
-        pass
+    if SONIDO_OK_DATAURL:
+        reproducir_dataurl(SONIDO_OK_DATAURL)
+    else:
+        for p in POSSIBLE_PATHS:
+            if "Audio" in p and os.path.exists(p):
+                try:
+                    # el tipo puede ser ogg o mp3; streamlit detecta por bytes
+                    st.audio(open(p, "rb").read())
+                    return
+                except:
+                    pass
+        st.warning("")
 
 
 # ===================================================================
@@ -193,6 +282,7 @@ with st.sidebar:
             err, msg = feriado_en_puntas(inicio_adj, fin_adj)
             if err:
                 st.error(msg)
+                # Solo reproducir error si es feriado o solapamiento
                 reproducir_error()
             else:
                 # ❌ Caso solapamiento
@@ -238,7 +328,6 @@ else:
         guardar_registros_globales(st.session_state.vacaciones)
         st.success(f"Eliminado: {eliminado['Nombre']}")
 
-
 # ===================================================================
 #                Construye mapa días
 # ===================================================================
@@ -254,7 +343,6 @@ def construir_map_dias():
     return mapa
 
 mapa_dias = construir_map_dias()
-
 
 # ===================================================================
 #                Calendario reducido
@@ -363,3 +451,4 @@ img = generar_calendario_reducido(
 )
 
 st.image(img, use_column_width=False, width=min(900, img.width))
+
