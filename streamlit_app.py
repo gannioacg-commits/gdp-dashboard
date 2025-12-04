@@ -6,7 +6,6 @@ import datetime
 import os
 import random
 import shutil
-import base64
 import json
 import re
 from PIL import Image, ImageDraw, ImageFont
@@ -25,115 +24,6 @@ APP_SOURCE = __file__  # ruta del propio archivo (se usa para embebido)
 # BEGIN EMBED_REGISTROS
 EMBED_REGISTROS = []
 # END EMBED_REGISTROS
-
-# ===================================================================
-#                RUTAS POSIBLES DE LOS AUDIOS (orden de prioridad)
-# ===================================================================
-POSSIBLE_PATHS = [
-    "/mnt/data/WhatsApp Ptt 2025-12-03 at 3.25.14 PM.ogg",
-    "/mnt/data/WhatsApp Audio 2025-11-18 at 10.12.57 AM.ogg",
-    "WhatsApp Ptt 2025-12-03 at 3.25.14 PM.ogg",
-    "WhatsApp Audio 2025-11-18 at 10.12.57 AM.ogg",
-    "data/WhatsApp Ptt 2025-12-03 at 3.25.14 PM.ogg",
-    "data/WhatsApp Audio 2025-11-18 at 10.12.57 AM.ogg",
-    "audio/WhatsApp Ptt 2025-12-03 at 3.25.14 PM.ogg",
-    "audio/WhatsApp Audio 2025-11-18 at 10.12.57 AM.ogg",
-]
-
-# ===================================================================
-#                Helpers para cargar/embeder audio (Base64)
-# ===================================================================
-def file_to_base64_dataurl(path):
-    """Convierte un archivo de audio local a data-url base64 (tipo audio/ogg)."""
-    try:
-        with open(path, "rb") as f:
-            data = f.read()
-        b64 = base64.b64encode(data).decode()
-        # Intentamos detectar el tipo por extensión (ogg/mp3/wav)
-        ext = os.path.splitext(path)[1].lower()
-        if ext == ".mp3":
-            mime = "audio/mpeg"
-        elif ext == ".wav":
-            mime = "audio/wav"
-        else:
-            mime = "audio/ogg"
-        return f"data:{mime};base64,{b64}"
-    except Exception:
-        return None
-
-def find_and_load_audio(preferred_name_fragments):
-    """
-    Busca en POSSIBLE_PATHS un archivo que contenga alguno de los fragments y lo convierte a data-url.
-    preferred_name_fragments: list of strings to match in file name (e.g. ['Ptt 2025-12-03', 'Audio 2025-11-18'])
-    """
-    for frag in preferred_name_fragments:
-        for p in POSSIBLE_PATHS:
-            if frag in p and os.path.exists(p):
-                url = file_to_base64_dataurl(p)
-                if url:
-                    return url
-    # fallback: try any file in POSSIBLE_PATHS existing
-    for p in POSSIBLE_PATHS:
-        if os.path.exists(p):
-            url = file_to_base64_dataurl(p)
-            if url:
-                return url
-    return None
-
-# Intentamos cargar ambos audios desde las rutas conocidas (orden lógico)
-SONIDO_ERROR_DATAURL = find_and_load_audio(["Ptt 2025-12-03", "Ptt 2025-12-03 at 3.25.14"])
-SONIDO_OK_DATAURL = find_and_load_audio(["Audio 2025-11-18", "10.12.57"])
-
-# Si no se encontraron y querés, podés pegar aquí directamente el data-url como string:
-# SONIDO_ERROR_DATAURL = "data:audio/ogg;base64,...."
-# SONIDO_OK_DATAURL = "data:audio/ogg;base64,...."
-
-def reproducir_dataurl(dataurl, autoplay=False):
-    """Inserta un tag <audio> con el dataurl. Usa st.markdown unsafe."""
-    if not dataurl:
-        return
-    auto = "autoplay" if autoplay else ""
-    st.markdown(
-        f"""
-        <audio {auto} controls>
-            <source src="{dataurl}">
-            Tu navegador no soporta audio embebido.
-        </audio>
-        """,
-        unsafe_allow_html=True
-    )
-
-def reproducir_error():
-    if st.session_state.get("SONIDO_ERROR_DATAURL"):
-        reproducir_dataurl(st.session_state["SONIDO_ERROR_DATAURL"])
-    elif SONIDO_ERROR_DATAURL:
-        reproducir_dataurl(SONIDO_ERROR_DATAURL)
-    else:
-        # fallback: si no hay dataurl, intentar reproducir desde archivo si existe
-        for p in POSSIBLE_PATHS:
-            if "Ptt" in p and os.path.exists(p):
-                try:
-                    st.audio(open(p, "rb").read(), format="audio/ogg")
-                    return
-                except:
-                    pass
-        # si no hay nada, no hacer ruido
-        # st.info("No hay sonido de error configurado.")  # opcional
-
-def reproducir_ok():
-    if st.session_state.get("SONIDO_OK_DATAURL"):
-        reproducir_dataurl(st.session_state["SONIDO_OK_DATAURL"])
-    elif SONIDO_OK_DATAURL:
-        reproducir_dataurl(SONIDO_OK_DATAURL)
-    else:
-        for p in POSSIBLE_PATHS:
-            if "Audio" in p and os.path.exists(p):
-                try:
-                    st.audio(open(p, "rb").read())
-                    return
-                except:
-                    pass
-        # st.info("No hay sonido OK configurado.")  # opcional
 
 # ===================================================================
 #                CARGA Y GUARDADO SEGURO + EMBED EN EL CÓDIGO
@@ -224,8 +114,7 @@ def embed_registros_en_codigo(lista):
     )
 
     if not pattern.search(src):
-        # No encontró el bloque: insertar antes del bloque de rutas de audio (fallback: al inicio del archivo)
-        # Hacemos backup y agregamos el bloque al inicio
+        # No encontró el bloque: insertar al inicio del archivo, haciendo backup
         backup_src = APP_SOURCE + ".bak"
         shutil.copy(APP_SOURCE, backup_src)
         new_src = replacement + "\n\n" + src
@@ -292,12 +181,6 @@ if "mes" not in st.session_state:
 if "anio" not in st.session_state:
     st.session_state.anio = hoy.year
 
-# inicializar posibles audios subidos en runtime
-if "SONIDO_OK_DATAURL" not in st.session_state:
-    st.session_state["SONIDO_OK_DATAURL"] = None
-if "SONIDO_ERROR_DATAURL" not in st.session_state:
-    st.session_state["SONIDO_ERROR_DATAURL"] = None
-
 # ===================================================================
 #                Utils
 # ===================================================================
@@ -351,27 +234,12 @@ with st.sidebar:
     color_default = existing_colors.get(nombre, random.choice(PALETTE))
     color = st.color_picker("Color (opcional)", value=color_default)
 
-    # Upload opcional de audios para runtime (no se embeben en código)
-    st.markdown("---")
-    st.write("Audios (opcional) — subir para reemplazar en esta sesión")
-    up_ok = st.file_uploader("Sonido OK (ogg/mp3/wav)", type=["ogg","mp3","wav"], key="upload_ok")
-    up_err = st.file_uploader("Sonido ERROR (ogg/mp3/wav)", type=["ogg","mp3","wav"], key="upload_err")
-
-    if up_ok is not None:
-        data = up_ok.read()
-        st.session_state["SONIDO_OK_DATAURL"] = "data:;base64," + base64.b64encode(data).decode()
-        st.success("Sonido OK cargado (para esta sesión).")
-    if up_err is not None:
-        data = up_err.read()
-        st.session_state["SONIDO_ERROR_DATAURL"] = "data:;base64," + base64.b64encode(data).decode()
-        st.success("Sonido ERROR cargado (para esta sesión).")
-
     if st.button("Registrar"):
 
         # ❌ Validación nombre vacío
         if not nombre.strip():
             st.error("Ingresá el nombre.")
-            reproducir_error()
+            # no audio; solo mostrar error
         else:
             inicio_adj, fin_adj, msg_adj = ajustar_inicio_por_fin_de_semana(fecha_inicio, dias)
             if msg_adj:
@@ -381,14 +249,11 @@ with st.sidebar:
             err, msg = feriado_en_puntas(inicio_adj, fin_adj)
             if err:
                 st.error(msg)
-                # Solo reproducir error si es feriado o solapamiento
-                reproducir_error()
             else:
                 # ❌ Caso solapamiento
                 sup, quien = solapamiento_mismo_sector(inicio_adj, fin_adj, sector)
                 if sup:
                     st.error(f"Se superpone con {quien}.")
-                    reproducir_error()
                 else:
                     # ✔️ REGISTRO CORRECTO
                     rec = {
@@ -404,7 +269,6 @@ with st.sidebar:
                     guardar_registros_globales(st.session_state.vacaciones)
 
                     st.success("Registrado correctamente")
-                    reproducir_ok()
 
 # ===================================================================
 #                Tabla + Eliminar
